@@ -6,10 +6,10 @@ Framework: .NET 4.8
 ## Installation
 Framework: [.NET 4.8](https://go.microsoft.com/fwlink/?linkid=2088631) (Can be installed when running script if needed)
 ## Feature
-- **Scan folders contain stored user data and app**
+- **Scan folders contain stored user data and app (Checking free space, permission, ...)**
 - **Full clone to destination folder (Date/Time/Permission...) and create symlink for old source path (optional)**
 ## Usage
 Right click => Run with Powershell
 
 ## Screenshot
-<img width="1109" height="930" alt="image" src="https://github.com/user-attachments/assets/ca22d0ee-8867-4a6e-8723-1c0a792eca79" />
+<img width="1266" height="893" alt="image" src="https://github.com/user-attachments/assets/056cdfc7-7bd6-4847-b37b-db27d483e3d0" />
