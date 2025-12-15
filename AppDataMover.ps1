@@ -53,7 +53,7 @@ $LangData = @{
         MsgAskCleanup = "Finished! Created {0} backups (.OLD).`nDelete them now to free space?";
         MsgStatLog = "Stats: {0} Folders, {1} Files ready to move.";
         MsgSummaryLog = "SUMMARY: Moved {0} folders, {1} files.";
-        
+        MsgScanDone = "Scan completed.`n";
         Robo0="[Code: 0] OK (No changes)"; Robo1="[Code: 1] OK (Copy success)";
         Robo8="[Code: 8] FAIL (Retry limit - File locked?)"; Robo16="[Code: 16] FATAL (Invalid Path/Access Denied)";
     };
@@ -93,12 +93,102 @@ $LangData = @{
         MsgAskCleanup = "TỔNG KẾT:`n- Thư mục đã chuyển: {0}`n- Tệp tin đã chuyển: {1}`n- Bản backup đã tạo: {2}`n`nBạn có muốn XÓA các file backup (.OLD) ngay bây giờ?";
         MsgStatLog = "Thống kê: {0} Thư mục, {1} File sẽ được chuyển.";
         MsgSummaryLog = "TỔNG KẾT: Đã chuyển {0} thư mục, {1} tệp tin.";
-        
+        MsgScanDone = "Quét hoàn tất.`n";
         Robo0="[Mã: 0] OK (Không thay đổi)"; Robo1="[Mã: 1] OK (Copy thành công)";
         Robo8="[Mã: 8] LỖI COPY (File đang mở?)"; Robo16="[Mã: 16] LỖI NGHIÊM TRỌNG (Sai đường dẫn/Quyền)";
     }
 }
 $CurrentLang = $LangData.EN # DEFAULT ENGLISH
+#endregion
+
+#region 2. MODERN FOLDER EXPLORER (C#)
+$ModernFolderPickerCode = @"
+using System;
+using System.Runtime.InteropServices;
+
+namespace Win32
+{
+    public class FolderPicker
+    {
+        [DllImport("shell32.dll")]
+        private static extern int SHCreateItemFromParsingName([MarshalAs(UnmanagedType.LPWStr)] string pszPath, IntPtr pbc, ref Guid riid, out IShellItem ppv);
+
+        [DllImport("user32.dll")]
+        private static extern IntPtr GetActiveWindow();
+
+        private const string IID_IFileDialog = "42f85136-db7e-439c-85f1-e4075d135fc8";
+        private const string IID_IShellItem  = "43826d1e-e718-42ee-bc55-a1e261c37bfe";
+        private const string CLSID_FileOpenDialog = "DC1C5A9C-E88A-4dde-A5A1-60F82A20AEF7";
+
+        [ComImport, Guid(IID_IFileDialog), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+        internal interface IFileDialog
+        {
+            [PreserveSig] int Show(IntPtr parent);
+            void SetFileTypes();
+            void SetFileTypeIndex();
+            void GetFileTypeIndex();
+            void Advise();
+            void Unadvise();
+            void SetOptions(uint fos);
+            void GetOptions();
+            void SetDefaultFolder(IShellItem psi);
+            void SetFolder(IShellItem psi);
+            void GetFolder();
+            void GetCurrentSelection();
+            void SetFileName();
+            void GetFileName();
+            void SetTitle([MarshalAs(UnmanagedType.LPWStr)] string title);
+            void SetOkButtonLabel();
+            void SetFileNameLabel();
+            void GetResult(out IShellItem ppsi);
+        }
+
+        [ComImport, Guid(IID_IShellItem), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+        internal interface IShellItem
+        {
+            void BindToHandler();
+            void GetParent();
+            void GetDisplayName(uint sigdnName, [MarshalAs(UnmanagedType.LPWStr)] out string ppszName);
+        }
+
+        [ComImport, Guid(CLSID_FileOpenDialog), ClassInterface(ClassInterfaceType.None)]
+        internal class FileOpenDialogRCW { }
+
+        public static string Show(string initialDirectory)
+        {
+            try
+            {
+                IFileDialog dialog = (IFileDialog)new FileOpenDialogRCW();
+                // FOS_PICKFOLDERS | FOS_FORCEFILESYSTEM
+                dialog.SetOptions((uint)0x00000020 | (uint)0x00000040);
+                dialog.SetTitle("Select Folder");
+
+                if (!string.IsNullOrEmpty(initialDirectory))
+                {
+                    Guid guid = new Guid(IID_IShellItem);
+                    IShellItem item;
+                    if (SHCreateItemFromParsingName(initialDirectory, IntPtr.Zero, ref guid, out item) == 0)
+                    {
+                        dialog.SetFolder(item);
+                    }
+                }
+
+                if (dialog.Show(GetActiveWindow()) == 0)
+                {
+                    IShellItem result;
+                    dialog.GetResult(out result);
+                    string path;
+                    // SIGDN_FILESYSPATH
+                    result.GetDisplayName(0x80058000, out path);
+                    return path;
+                }
+            }
+            catch { }
+            return null;
+        }
+    }
+}
+"@
 #endregion
 
 #region LIBRARY
@@ -154,6 +244,12 @@ if ([System.Threading.Thread]::CurrentThread.GetApartmentState() -ne "STA") {
 # LOAD WPF ASSEMBLIES
 try {
     Add-Type -AssemblyName PresentationFramework, System.Windows.Forms, System.Xml, WindowsBase -ErrorAction Stop
+
+    # Load C# Code only if not already loaded
+    if (-not ([System.Management.Automation.PSTypeName]'Win32.FolderPicker').Type) {
+        Add-Type -TypeDefinition $ModernFolderPickerCode -Language CSharp
+    }
+
     if (-not ([System.AppDomain]::CurrentDomain.GetAssemblies() | Where-Object { $_.FullName -match "PresentationCore" })) {
         [void][System.Reflection.Assembly]::LoadWithPartialName("PresentationCore")
     }
@@ -301,7 +397,7 @@ $xaml = @"
                 <StackPanel Grid.Row="1">
                     <StackPanel x:Name="AutoPanel" Visibility="Visible">
                         <TextBlock x:Name="LblGrpAuto" Text="Select App:" FontWeight="SemiBold" Margin="0,0,0,6"/>
-                        <ComboBox x:Name="AppCombo" Margin="0,0,0,12" Height="32" Padding="6,4"/>
+                        <ComboBox x:Name="AppCombo" VerticalContentAlignment="Center" Margin="0,0,0,12" Height="32" Padding="6,4"/>
                         <TextBlock x:Name="LblGrpFolder" Text="Folders:" FontWeight="Normal" Margin="0,0,0,6"/>
                         <Border BorderBrush="#ccc" BorderThickness="1" CornerRadius="4" Background="White" Height="250">
                             <ScrollViewer VerticalScrollBarVisibility="Auto">
@@ -380,13 +476,8 @@ $ProgBar = $window.FindName('ProgBar'); $StatusBlock = $window.FindName('StatusB
 $GrpLog = $window.FindName('GrpLog'); $LogBox = $window.FindName('LogBox')
 
 function Write-LogUI {
-    param([string]$Msg, [string]$Type="INFO")#, [bool]$Console=$true)
+    param([string]$Msg, [string]$Type="INFO")
     $ts = Get-Date -Format "HH:mm:ss"
-    # if ($Console) {
-    #     $conColor = "Gray"
-    #     switch ($Type) { "OK"{$conColor="Green"} "WARN"{$conColor="Yellow"} "ERR"{$conColor="Red"} "SCAN"{$conColor="Cyan"} "TRACE"{$conColor="DarkGray"} }
-    #     Write-Host ("[{0}] {1}" -f $ts, $Msg) -ForegroundColor $conColor
-    # }
     $LogBox.Dispatcher.Invoke({
         $para = New-Object System.Windows.Documents.Paragraph
         $para.Margin = New-Object System.Windows.Thickness(0,0,0,4)
@@ -434,9 +525,24 @@ function Update-UILanguage {
     $LogBtn.Content = $Lang.BtnLog; $LblProgress.Text = $Lang.LblProgress
     $StatusBlock.Text = $Lang.LblStatus; $GrpLog.Header = $Lang.LogHeader
     $BtnLangToggle.Content = $Lang.LangName
-    
+
     $Script:CurrentLang = $Lang
+    
     if ($isAdmin) { Write-LogUI $Lang.MsgAdminReady "OK" } else { Write-LogUI $Lang.MsgUserWarn "WARN" }
+
+    # update folder panel contents without changing selection
+    foreach ($k in $CompPanel.Children) {
+        $c = $k.Tag
+        $suffix = $Lang.MsgMissing; $color = "Gray"
+        # Determine status based on current state or quick check
+        if (Test-Path $c.Path) {
+            $isLinked = (Get-Item $c.Path -Force).LinkType -match "SymbolicLink|Junction"
+            if ($isLinked) { $suffix = $Lang.MsgLinked; $color = "DarkOrange" }
+            else { $suffix = $Lang.MsgFound; $color = "DarkBlue" }
+        } else { $color = "Gray" }
+        $k.Content = "$($c.Label) [$($suffix)]"
+        $k.Foreground = $color
+    }
 }
 
 $BtnLangToggle.Add_Click({
@@ -533,6 +639,7 @@ function UpdateCompPanel {
         }
         $CompPanel.Children.Add($chk)
     }
+    Write-LogUI ($CurrentLang.MsgScanDone) "SCAN"
 }
 $AppCombo.Add_SelectionChanged({ UpdateCompPanel })
 
@@ -542,8 +649,9 @@ function Get-FolderSelect($initPath) {
     if ($dlg.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK) { return $dlg.SelectedPath }
     return ""
 }
-$BrowseSourceBtn.Add_Click({ $p = Get-FolderSelect $SourcePathBox.Text; if ($p) { $SourcePathBox.Text = $p } })
-$BrowseDestBtn.Add_Click({ $p = Get-FolderSelect $DestPathBox.Text; if ($p) { $DestPathBox.Text = $p } })
+
+$BrowseSourceBtn.Add_Click({ $p = [Win32.FolderPicker]::Show($SourcePathBox.Text); if($p){$SourcePathBox.Text=$p} })
+$BrowseDestBtn.Add_Click({ $p = [Win32.FolderPicker]::Show($DestPathBox.Text); if($p){$DestPathBox.Text=$p} })
 
 function Stop-TargetProcesses($procNames) {
     $uniqueProcs = $procNames | Select-Object -Unique
